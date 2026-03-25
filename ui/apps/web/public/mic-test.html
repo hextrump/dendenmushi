@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎤 Mic Test — Den Den Mushi</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a; color: #e2e8f0;
+      display: flex; justify-content: center; align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 600px; width: 100%; padding: 2rem;
+      background: rgba(30,41,59,0.8); border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 2rem; }
+    
+    .test-section {
+      background: rgba(15,23,42,0.5); border-radius: 12px;
+      padding: 1.5rem; margin-bottom: 1.5rem;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .test-title {
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.1em; color: #64748b; margin-bottom: 1rem;
+    }
+
+    button {
+      padding: 0.75rem 1.5rem; border-radius: 8px; border: none;
+      font-size: 0.9rem; font-weight: 600; cursor: pointer;
+      transition: all 0.2s; margin-right: 0.5rem; margin-bottom: 0.5rem;
+    }
+    .btn-primary { background: #6366f1; color: white; }
+    .btn-primary:hover { background: #818cf8; }
+    .btn-primary:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+    .btn-danger { background: #ef4444; color: white; }
+    .btn-danger:hover { background: #f87171; }
+    .btn-success { background: #22c55e; color: white; }
+    .btn-success:hover { background: #4ade80; }
+
+    #log {
+      background: #020617; border-radius: 8px; padding: 1rem;
+      font-size: 0.8rem; font-family: 'Consolas', monospace;
+      max-height: 300px; overflow-y: auto; line-height: 1.6;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .log-ok { color: #4ade80; }
+    .log-err { color: #f87171; }
+    .log-info { color: #60a5fa; }
+    .log-warn { color: #fbbf24; }
+
+    canvas {
+      width: 100%; height: 60px; border-radius: 8px;
+      background: rgba(0,0,0,0.3); margin-bottom: 1rem;
+    }
+    
+    .status-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    .status-item {
+      background: rgba(0,0,0,0.3); padding: 0.5rem 0.75rem; border-radius: 6px;
+      font-size: 0.75rem;
+    }
+    .status-label { color: #64748b; }
+    .status-value { color: #e2e8f0; font-weight: 600; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🎤 Microphone Test</h1>
+    <p class="subtitle">独立测试麦克风采集 → 回放是否正常工作</p>
+
+    <!-- Test 1: Basic MediaRecorder -->
+    <div class="test-section">
+      <div class="test-title">Test 1: MediaRecorder 录音 + 回放</div>
+      <p style="font-size:0.8rem;color:#94a3b8;margin-bottom:1rem;">使用浏览器 MediaRecorder API 录音，然后回放。最基础的测试。</p>
+      <button id="btn-record" class="btn-primary" onclick="startMediaRecorder()">🎤 开始录音</button>
+      <button id="btn-stop" class="btn-danger" onclick="stopMediaRecorder()" disabled>⏹ 停止录音</button>
+      <button id="btn-play" class="btn-success" onclick="playRecording()" disabled>▶ 播放录音</button>
+    </div>
+
+    <!-- Test 2: AudioWorklet PCM -->
+    <div class="test-section">
+      <div class="test-title">Test 2: AudioWorklet PCM 采集 (16kHz)</div>
+      <p style="font-size:0.8rem;color:#94a3b8;margin-bottom:1rem;">模拟项目中的 AudioWorklet 采集流程，录制 16kHz PCM 并回放。</p>
+      <canvas id="visualizer"></canvas>
+      <div class="status-grid">
+        <div class="status-item"><span class="status-label">Sample Rate: </span><span class="status-value" id="sr">—</span></div>
+        <div class="status-item"><span class="status-label">Chunks: </span><span class="status-value" id="chunks">0</span></div>
+        <div class="status-item"><span class="status-label">PCM Size: </span><span class="status-value" id="pcmsize">0 KB</span></div>
+        <div class="status-item"><span class="status-label">Volume: </span><span class="status-value" id="vol">0</span></div>
+      </div>
+      <button id="btn-pcm-record" class="btn-primary" onclick="startPCMRecord()">🎤 PCM 录音</button>
+      <button id="btn-pcm-stop" class="btn-danger" onclick="stopPCMRecord()" disabled>⏹ 停止</button>
+      <button id="btn-pcm-play" class="btn-success" onclick="playPCM()" disabled>▶ 播放 PCM</button>
+    </div>
+
+    <!-- Test 3: WebSocket connectivity -->
+    <div class="test-section">
+      <div class="test-title">Test 3: WebSocket 连接测试 (ws://localhost:8080)</div>
+      <button class="btn-primary" onclick="testWebSocket()">🔌 测试 WS 连接</button>
+    </div>
+
+    <!-- Log -->
+    <div class="test-section">
+      <div class="test-title">日志</div>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    // ─── Logging ──────────────────────────────────
+    const logEl = document.getElementById('log');
+    function log(msg, type = 'info') {
+      const cls = { ok: 'log-ok', err: 'log-err', info: 'log-info', warn: 'log-warn' }[type] || 'log-info';
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+      logEl.innerHTML += `<div class="${cls}">[${time}] ${msg}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // ─── Test 1: MediaRecorder ─────────────────────
+    let mediaRecorder, recordedChunks = [], recordedBlob;
+
+    async function startMediaRecorder() {
+      try {
+        log('Requesting microphone access...', 'info');
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        log(`✅ Got microphone stream. Tracks: ${stream.getAudioTracks().length}`, 'ok');
+        
+        const track = stream.getAudioTracks()[0];
+        const settings = track.getSettings();
+        log(`   Track: ${track.label}`, 'info');
+        log(`   SampleRate: ${settings.sampleRate || 'N/A'}, Channels: ${settings.channelCount || 'N/A'}`, 'info');
+
+        mediaRecorder = new MediaRecorder(stream);
+        recordedChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            recordedChunks.push(e.data);
+            log(`   Chunk received: ${e.data.size} bytes`, 'info');
+          }
+        };
+
+        mediaRecorder.onstop = () => {
+          recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+          log(`✅ Recording complete: ${(recordedBlob.size / 1024).toFixed(1)} KB, type: ${mediaRecorder.mimeType}`, 'ok');
+          document.getElementById('btn-play').disabled = false;
+          stream.getTracks().forEach(t => t.stop());
+        };
+
+        mediaRecorder.onerror = (e) => {
+          log(`❌ MediaRecorder error: ${e.error?.message || e}`, 'err');
+        };
+
+        mediaRecorder.start(500); // 500ms chunks
+        log('🎤 Recording started (MediaRecorder)...', 'ok');
+
+        document.getElementById('btn-record').disabled = true;
+        document.getElementById('btn-stop').disabled = false;
+      } catch (err) {
+        log(`❌ Microphone access denied: ${err.message}`, 'err');
+      }
+    }
+
+    function stopMediaRecorder() {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        log('⏹ MediaRecorder stopped.', 'warn');
+      }
+      document.getElementById('btn-record').disabled = false;
+      document.getElementById('btn-stop').disabled = true;
+    }
+
+    function playRecording() {
+      if (!recordedBlob) { log('❌ No recording to play', 'err'); return; }
+      log(`▶ Playing recording (${(recordedBlob.size / 1024).toFixed(1)} KB)...`, 'info');
+      const url = URL.createObjectURL(recordedBlob);
+      const audio = new Audio(url);
+      audio.onplay = () => log('🔊 Audio playback started', 'ok');
+      audio.onended = () => { log('✅ Playback finished', 'ok'); URL.revokeObjectURL(url); };
+      audio.onerror = (e) => log(`❌ Playback error: ${e.target.error?.message || 'unknown'}`, 'err');
+      audio.play().catch(e => log(`❌ Play blocked: ${e.message}`, 'err'));
+    }
+
+    // ─── Test 2: AudioWorklet PCM ──────────────────
+    let audioCtx, pcmChunks = [], pcmRecording = false, animId;
+
+    async function startPCMRecord() {
+      try {
+        log('Starting PCM recording (AudioWorklet @ 16kHz)...', 'info');
+        pcmChunks = [];
+
+        // Create AudioContext at 16kHz (like the project does)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        log(`   AudioContext created. sampleRate=${audioCtx.sampleRate}, state=${audioCtx.state}`, 'info');
+        document.getElementById('sr').textContent = audioCtx.sampleRate + ' Hz';
+
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+          log(`   AudioContext resumed. state=${audioCtx.state}`, 'info');
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        log(`✅ Mic stream acquired for PCM`, 'ok');
+
+        const source = audioCtx.createMediaStreamSource(stream);
+        
+        // Analyser for visualization
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        const bufLen = analyser.frequencyBinCount;
+        const dataArr = new Uint8Array(bufLen);
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth * 2;
+        canvas.height = canvas.offsetHeight * 2;
+
+        // Try AudioWorklet first, fall back to ScriptProcessor
+        let usingWorklet = false;
+        try {
+          // Register inline worklet via blob
+          const workletCode = `
+            class PCMProcessor extends AudioWorkletProcessor {
+              process(inputs) {
+                const input = inputs[0];
+                if (input && input.length > 0) {
+                  const channelData = input[0];
+                  const pcmData = new Int16Array(channelData.length);
+                  for (let i = 0; i < channelData.length; i++) {
+                    let s = Math.max(-1, Math.min(1, channelData[i]));
+                    pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                  }
+                  this.port.postMessage(pcmData);
+                }
+                return true;
+              }
+            }
+            registerProcessor('pcm-test-processor', PCMProcessor);
+          `;
+          const blob = new Blob([workletCode], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          await audioCtx.audioWorklet.addModule(url);
+          URL.revokeObjectURL(url);
+
+          const workletNode = new AudioWorkletNode(audioCtx, 'pcm-test-processor');
+          workletNode.port.onmessage = (e) => {
+            pcmChunks.push(new Int16Array(e.data));
+            document.getElementById('chunks').textContent = pcmChunks.length;
+            const totalBytes = pcmChunks.reduce((a, c) => a + c.byteLength, 0);
+            document.getElementById('pcmsize').textContent = (totalBytes / 1024).toFixed(1) + ' KB';
+          };
+
+          source.connect(analyser);
+          analyser.connect(workletNode);
+          workletNode.connect(audioCtx.destination);
+          usingWorklet = true;
+          log(`✅ AudioWorklet registered and connected`, 'ok');
+        } catch (wErr) {
+          log(`⚠️ AudioWorklet failed (${wErr.message}), falling back to ScriptProcessor`, 'warn');
+          
+          const scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+          scriptNode.onaudioprocess = (e) => {
+            const channelData = e.inputBuffer.getChannelData(0);
+            const pcmData = new Int16Array(channelData.length);
+            for (let i = 0; i < channelData.length; i++) {
+              let s = Math.max(-1, Math.min(1, channelData[i]));
+              pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            pcmChunks.push(pcmData);
+            document.getElementById('chunks').textContent = pcmChunks.length;
+            const totalBytes = pcmChunks.reduce((a, c) => a + c.byteLength, 0);
+            document.getElementById('pcmsize').textContent = (totalBytes / 1024).toFixed(1) + ' KB';
+          };
+
+          source.connect(analyser);
+          analyser.connect(scriptNode);
+          scriptNode.connect(audioCtx.destination);
+        }
+
+        // Visualize
+        pcmRecording = true;
+        function draw() {
+          if (!pcmRecording) return;
+          animId = requestAnimationFrame(draw);
+          analyser.getByteFrequencyData(dataArr);
+          
+          let sum = 0;
+          for (let i = 0; i < bufLen; i++) sum += dataArr[i];
+          const avg = Math.round(sum / bufLen);
+          document.getElementById('vol').textContent = avg;
+
+          canvasCtx.fillStyle = 'rgba(0,0,0,0.3)';
+          canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+          const barWidth = (canvas.width / bufLen) * 2;
+          let x = 0;
+          for (let i = 0; i < bufLen; i++) {
+            const barHeight = (dataArr[i] / 255) * canvas.height;
+            const hue = 230 + (dataArr[i] / 255) * 60;
+            canvasCtx.fillStyle = `hsl(${hue}, 80%, 60%)`;
+            canvasCtx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
+            x += barWidth;
+          }
+        }
+        draw();
+
+        // Store stream ref for cleanup
+        audioCtx._stream = stream;
+
+        log(`🎤 PCM recording started (${usingWorklet ? 'AudioWorklet' : 'ScriptProcessor'})`, 'ok');
+        document.getElementById('btn-pcm-record').disabled = true;
+        document.getElementById('btn-pcm-stop').disabled = false;
+
+      } catch (err) {
+        log(`❌ PCM record error: ${err.message}`, 'err');
+        console.error(err);
+      }
+    }
+
+    function stopPCMRecord() {
+      pcmRecording = false;
+      cancelAnimationFrame(animId);
+      
+      if (audioCtx) {
+        if (audioCtx._stream) audioCtx._stream.getTracks().forEach(t => t.stop());
+        audioCtx.close();
+      }
+
+      const totalSamples = pcmChunks.reduce((a, c) => a + c.length, 0);
+      const totalBytes = totalSamples * 2;
+      const durationSec = totalSamples / 16000;
+      log(`⏹ PCM recording stopped. ${pcmChunks.length} chunks, ${totalSamples} samples, ${(totalBytes/1024).toFixed(1)} KB, ~${durationSec.toFixed(1)}s`, 'warn');
+
+      document.getElementById('btn-pcm-record').disabled = false;
+      document.getElementById('btn-pcm-stop').disabled = true;
+      if (pcmChunks.length > 0) document.getElementById('btn-pcm-play').disabled = false;
+    }
+
+    function playPCM() {
+      if (pcmChunks.length === 0) { log('❌ No PCM data', 'err'); return; }
+
+      // Merge all chunks
+      const totalLen = pcmChunks.reduce((a, c) => a + c.length, 0);
+      const merged = new Int16Array(totalLen);
+      let offset = 0;
+      for (const chunk of pcmChunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+
+      log(`▶ Playing PCM: ${totalLen} samples @ 16kHz (~${(totalLen/16000).toFixed(1)}s)`, 'info');
+
+      // Convert Int16 → Float32
+      const float32 = new Float32Array(totalLen);
+      for (let i = 0; i < totalLen; i++) {
+        float32[i] = merged[i] / 0x7FFF;
+      }
+
+      // Check if all zeros
+      let maxVal = 0;
+      for (let i = 0; i < float32.length; i++) {
+        const abs = Math.abs(float32[i]);
+        if (abs > maxVal) maxVal = abs;
+      }
+      log(`   Max amplitude: ${maxVal.toFixed(6)} ${maxVal < 0.001 ? '⚠️ VERY LOW — might be silent!' : '✅ OK'}`, maxVal < 0.001 ? 'warn' : 'ok');
+
+      // Play via AudioContext
+      const playCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const buffer = playCtx.createBuffer(1, totalLen, 16000);
+      buffer.copyToChannel(float32, 0);
+
+      const source = playCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(playCtx.destination);
+      source.onended = () => { log('✅ PCM playback finished', 'ok'); playCtx.close(); };
+      source.start();
+      log('🔊 PCM playback started', 'ok');
+    }
+
+    // ─── Test 3: WebSocket ──────────────────────────
+    function testWebSocket() {
+      log('Testing WebSocket connection to ws://localhost:8080...', 'info');
+      try {
+        const ws = new WebSocket('ws://localhost:8080');
+        
+        ws.onopen = () => {
+          log('✅ WebSocket connected!', 'ok');
+          ws.send(JSON.stringify({ type: 'start' }));
+          log('   Sent: { type: "start" }', 'info');
+        };
+        
+        ws.onmessage = (e) => {
+          log(`   ← Received: ${e.data.substring(0, 200)}`, 'ok');
+        };
+        
+        ws.onerror = (e) => {
+          log(`❌ WebSocket error`, 'err');
+        };
+        
+        ws.onclose = (e) => {
+          log(`WebSocket closed: code=${e.code} reason=${e.reason || 'none'}`, 'warn');
+        };
+
+        // Auto-close after 5s
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close();
+            log('   (Auto-closed after 5s)', 'info');
+          }
+        }, 5000);
+      } catch (err) {
+        log(`❌ WebSocket error: ${err.message}`, 'err');
+      }
+    }
+
+    // ─── Init ───────────────────────────────────────
+    log('🐌 Den Den Mushi — Mic Test Ready', 'ok');
+    log(`Browser: ${navigator.userAgent.split(' ').slice(-3).join(' ')}`, 'info');
+    log(`Secure context: ${window.isSecureContext}`, window.isSecureContext ? 'ok' : 'err');
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      log('❌ getUserMedia NOT available! Need HTTPS or localhost.', 'err');
+    } else {
+      log('✅ getUserMedia available', 'ok');
+    }
+    
+    if (typeof AudioWorkletNode !== 'undefined') {
+      log('✅ AudioWorklet available', 'ok');
+    } else {
+      log('⚠️ AudioWorklet NOT available, will use ScriptProcessor fallback', 'warn');
+    }
+  </script>
+</body>
+</html>

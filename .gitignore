@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+
+# Node
+node_modules/
+.next/
+.turbo/
+
+# Env & secrets
+.env
+.env.local
+env
+
+# Debug / temp
+*.wav
+*.mp3
+*.log
+err.txt
+out.txt
+out2.txt
+error_msg.txt
+
+# OS
+.DS_Store
+Thumbs.db
