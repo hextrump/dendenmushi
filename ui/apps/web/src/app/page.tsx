@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { StreamContext, StreamProvider } from "@/providers/Stream";
 import type { TranscriptEntry, Suggestion, SessionSummary, StreamContextType, AudioSource } from "@/providers/Stream";
-import { Mic, MicOff, BookOpen, Sparkles, Bot, FileText, Send, Volume2, Trash2, ChevronRight, Settings, Monitor, Upload } from "lucide-react";
+import { Mic, MicOff, BookOpen, Sparkles, Bot, FileText, Send, Volume2, Trash2, Monitor, Upload, Plus, Search, MessageSquare, Paperclip, X, ChevronDown } from "lucide-react";
 
 export default function DashboardPage() {
   return (
@@ -11,6 +11,14 @@ export default function DashboardPage() {
       <Dashboard />
     </StreamProvider>
   );
+}
+
+// ─── Session history type ─────────────────────
+interface SessionRecord {
+  id: string;
+  title: string;
+  timestamp: number;
+  preview: string;
 }
 
 function Dashboard() {
@@ -24,21 +32,28 @@ function Dashboard() {
 
   const boardEndRef = useRef<HTMLDivElement>(null);
   const agentEndRef = useRef<HTMLDivElement>(null);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
   const [manualInput, setManualInput] = useState("");
   const [prepInput, setPrepInput] = useState("");
   const [selectedSource, setSelectedSource] = useState<AudioSource>('mic');
   const [asrLang, setAsrLang] = useState('auto');
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [attachedDocs, setAttachedDocs] = useState<{name: string, content: string}[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [sessions, setSessions] = useState<SessionRecord[]>([
+    { id: '1', title: '便利店面试代答', timestamp: Date.now() - 86400000, preview: '山本面试准备...' },
+  ]);
   const [prepChat, setPrepChat] = useState<{role: 'ai'|'user', content: string}[]>([
-    { role: 'ai', content: '您好，我是业务代答代理。请在接通语音前输入对方情报或谈判策略。会议开始后，您的设定将作为全局系统提示词生效。' }
+    { role: 'ai', content: '请在接通前设定接线员人设、对方情报、准备话术。可以拖入参考文档，也可以直接输入策略。' }
   ]);
 
-  // Define derived state first
+  // Derived state
   const boardEntries = transcript.filter(t => t.speaker === 'user');
   const agentEntries = transcript.filter(t => t.speaker === 'ai');
 
-  // Then effects
   useEffect(() => {
     boardEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [transcript]);
@@ -47,7 +62,7 @@ function Dashboard() {
     agentEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [agentEntries.length, aiDraft, suggestions.length]);
 
-  // Then handlers
+  // ─── Handlers ─────────────────────────────────
   const handleManualSend = () => {
     if (manualInput.trim()) {
       sendManualTTS(manualInput.trim());
@@ -58,18 +73,28 @@ function Dashboard() {
   const handlePrepSubmit = () => {
     if (!prepInput.trim()) return;
     setPrepChat(prev => [...prev, { role: 'user', content: prepInput }]);
+    // TODO: Call LLM to generate assistant response for prep discussion
+    // For now, echo a placeholder response
+    const userMsg = prepInput;
     setPrepInput("");
+    // Simulate assistant thinking
+    setTimeout(() => {
+      setPrepChat(prev => [...prev, { role: 'ai', content: `收到。我会根据「${userMsg}」来准备话术。还有其他需要注意的吗？` }]);
+    }, 500);
   };
 
   const handleStartVoice = () => {
-    const compiledContext = prepChat.map(m => `${m.role === 'user' ? '用户设定' : '系统提示'}: ${m.content}`).join('\n');
-    startRecording(compiledContext, selectedSource, fileUrl || undefined, asrLang);
+    // Compile context from prep chat + attached docs
+    const chatContext = prepChat.map(m => `${m.role === 'user' ? '用户设定' : '系统提示'}: ${m.content}`).join('\n');
+    const docContext = attachedDocs.length > 0
+      ? '\n\n--- 参考资料 ---\n' + attachedDocs.map(d => `[${d.name}]\n${d.content}`).join('\n\n')
+      : '';
+    startRecording(chatContext + docContext, selectedSource, fileUrl || undefined, asrLang);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Revoke old URL
       if (fileUrl) URL.revokeObjectURL(fileUrl);
       const url = URL.createObjectURL(file);
       setFileUrl(url);
@@ -78,308 +103,400 @@ function Dashboard() {
     }
   };
 
+  const handleNewSession = () => {
+    // Save current session to history
+    if (transcript.length > 0) {
+      const firstMsg = transcript[0]?.text?.substring(0, 30) || '新会话';
+      setSessions(prev => [{
+        id: Date.now().toString(),
+        title: firstMsg + '...',
+        timestamp: Date.now(),
+        preview: transcript.slice(-1)[0]?.text?.substring(0, 50) || ''
+      }, ...prev]);
+    }
+    clearSession();
+    setPrepChat([
+      { role: 'ai', content: '请在接通前设定接线员人设、对方情报、准备话术。可以拖入参考文档，也可以直接输入策略。' }
+    ]);
+    setAttachedDocs([]);
+  };
+
+  // ─── Drag & Drop for documents ────────────────
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const content = ev.target?.result as string;
+        setAttachedDocs(prev => [...prev, { name: file.name, content: content.substring(0, 5000) }]);
+        setPrepChat(prev => [...prev, 
+          { role: 'user', content: `📎 已上传文档: ${file.name}` },
+          { role: 'ai', content: `收到「${file.name}」，内容已加载为参考资料。我会将其纳入会话背景。` }
+        ]);
+      };
+      reader.readAsText(file);
+    });
+  }, []);
+
+  const removeDoc = (idx: number) => {
+    setAttachedDocs(prev => prev.filter((_, i) => i !== idx));
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
+    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
 
-      {/* ═══════════ HEADER ═══════════ */}
-      <header className="flex items-center justify-between px-5 py-2.5 border-b border-slate-800/60 bg-slate-900/40 backdrop-blur-xl shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/25">
-            <span className="text-sm">🐌</span>
-          </div>
-          <div>
-            <h1 className="text-base font-semibold tracking-tight leading-none">Den Den Mushi</h1>
-            <span className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">v2.0 Realtime</span>
-          </div>
+      {/* ═══════════ LEFT SIDEBAR (SESSION LIST) ═══════════ */}
+      <aside className="w-64 flex flex-col bg-slate-900/60 border-r border-slate-800/40 shrink-0">
+        {/* Logo */}
+        <div className="px-4 py-3 flex items-center gap-2.5 border-b border-slate-800/40">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/25 text-sm">🐌</div>
+          <span className="text-sm font-semibold tracking-tight">Den Den Mushi</span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <StatusDot label="WS" active={connectionStatus.ws} />
-            <StatusDot label="ASR" active={connectionStatus.asr} />
-            <StatusDot label="TTS" active={connectionStatus.tts} />
-          </div>
-          <div className="h-6 w-px bg-slate-800" />
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs text-emerald-400 font-medium">Agent Proxy</span>
-          </div>
+        {/* New + Search */}
+        <div className="px-3 py-2.5 space-y-1.5">
+          <button 
+            onClick={handleNewSession}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 rounded-lg transition-colors border border-slate-800/60 hover:border-slate-700"
+          >
+            <Plus size={14} /> 新建对话
+          </button>
+          {showSearch ? (
+            <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-lg px-2">
+              <Search size={12} className="text-slate-600 shrink-0" />
+              <input 
+                type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                placeholder="搜索对话..." autoFocus
+                onBlur={() => { if (!searchQuery) setShowSearch(false); }}
+                className="flex-1 bg-transparent py-1.5 text-xs placeholder-slate-700 focus:outline-none"
+              />
+              <button onClick={() => { setSearchQuery(''); setShowSearch(false); }}><X size={10} className="text-slate-700" /></button>
+            </div>
+          ) : (
+            <button 
+              onClick={() => setShowSearch(true)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-500 hover:text-slate-300 hover:bg-slate-800/50 rounded-lg transition-colors"
+            >
+              <Search size={14} /> 搜索对话
+            </button>
+          )}
         </div>
-      </header>
 
-      {/* ═══════════ MAIN LAYOUT ═══════════ */}
-      <main className="flex flex-1 overflow-hidden">
-
-        {/* ─── 0. NAV BAR ─── */}
-        <nav className="w-16 flex flex-col items-center py-4 bg-slate-950 border-r border-slate-800/60 shrink-0">
-          <div className="flex flex-col gap-6 w-full items-center">
-            <div className="w-10 h-10 bg-indigo-600/20 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-500/30 shadow-inner"><BookOpen size={20} /></div>
-            <div className="w-10 h-10 text-slate-500 hover:text-slate-300 rounded-xl flex items-center justify-center cursor-pointer hover:bg-slate-800 transition-colors"><Mic size={20} /></div>
-            <div className="w-10 h-10 text-slate-500 hover:text-slate-300 rounded-xl flex items-center justify-center cursor-pointer hover:bg-slate-800 transition-colors"><Sparkles size={20} /></div>
-            <div className="w-10 h-10 text-slate-500 hover:text-slate-300 rounded-xl flex items-center justify-center cursor-pointer hover:bg-slate-800 transition-colors mt-auto"><Settings size={20} /></div>
-          </div>
-        </nav>
-
-        {/* ─── 1. PREP CONTEXT (LEFT) ─── */}
-        <section className="w-80 flex flex-col border-r border-slate-800/40 bg-slate-900/30 shrink-0">
-          <SectionHeader icon={<FileText size={13} />} title="Context / 对话设定" subtitle="会前背景输入" />
-          <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin' }}>
-            {prepChat.map((msg, i) => (
-              <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in`}>
-                <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs leading-relaxed ${
-                  msg.role === 'user' ? 'bg-indigo-600/20 border border-indigo-500/30 text-indigo-100 rounded-tr-sm' 
-                  : 'bg-slate-800 border border-slate-700/50 text-slate-300 rounded-tl-sm'
-                }`}>
-                  {msg.content}
-                </div>
+        {/* Session List */}
+        <div className="flex-1 overflow-y-auto px-2" style={{ scrollbarWidth: 'thin' }}>
+          <div className="px-2 py-1.5 text-[9px] font-bold text-slate-600 uppercase tracking-widest">历史对话</div>
+          {sessions
+            .filter(s => !searchQuery || s.title.includes(searchQuery) || s.preview.includes(searchQuery))
+            .map(session => (
+            <button 
+              key={session.id}
+              className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-slate-800/60 transition-colors group mb-0.5"
+            >
+              <div className="flex items-center gap-2">
+                <MessageSquare size={13} className="text-slate-600 shrink-0" />
+                <span className="text-[12px] text-slate-400 group-hover:text-slate-200 truncate">{session.title}</span>
               </div>
+              <div className="text-[10px] text-slate-700 ml-[21px] mt-0.5 truncate">{session.preview}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Connection status footer */}
+        <div className="px-3 py-2 border-t border-slate-800/40 flex items-center gap-3 text-[9px]">
+          <StatusDot label="WS" active={connectionStatus.ws} />
+          <StatusDot label="ASR" active={connectionStatus.asr} />
+          <StatusDot label="TTS" active={connectionStatus.tts} />
+        </div>
+      </aside>
+
+      {/* ═══════════ CONTEXT / PREP PANEL ═══════════ */}
+      <section 
+        ref={dropZoneRef}
+        className={`w-80 flex flex-col border-r shrink-0 transition-colors ${
+          isDragOver ? 'border-indigo-500 bg-indigo-950/20' : 'border-slate-800/40 bg-slate-900/30'
+        }`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <div className="px-4 py-2 bg-slate-900/30 border-b border-slate-800/40 flex items-center justify-between shrink-0">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+            <FileText size={13} /> 对话设定 / Context
+          </span>
+          <label className="flex items-center gap-1 text-[9px] text-slate-600 hover:text-slate-400 cursor-pointer transition-colors">
+            <Paperclip size={10} /> 附件
+            <input type="file" accept=".txt,.md,.csv,.json,.pdf,.doc,.docx" multiple onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              files.forEach(file => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  setAttachedDocs(prev => [...prev, { name: file.name, content: (ev.target?.result as string).substring(0, 5000) }]);
+                  setPrepChat(prev => [...prev, 
+                    { role: 'user', content: `📎 已上传文档: ${file.name}` },
+                    { role: 'ai', content: `收到「${file.name}」，已加载为参考资料。` }
+                  ]);
+                };
+                reader.readAsText(file);
+              });
+              e.target.value = '';
+            }} className="hidden" />
+          </label>
+        </div>
+
+        {/* Drag overlay */}
+        {isDragOver && (
+          <div className="absolute inset-0 z-50 bg-indigo-950/80 backdrop-blur-sm flex items-center justify-center pointer-events-none rounded-lg m-1">
+            <div className="text-center">
+              <Upload size={32} className="text-indigo-400 mx-auto mb-2 animate-bounce" />
+              <p className="text-sm text-indigo-300 font-medium">拖放文档到此处</p>
+              <p className="text-[10px] text-indigo-400/50 mt-1">支持 .txt .md .csv .json 等文本格式</p>
+            </div>
+          </div>
+        )}
+
+        {/* Attached docs bar */}
+        {attachedDocs.length > 0 && (
+          <div className="px-3 py-1.5 border-b border-slate-800/40 flex gap-1.5 flex-wrap bg-slate-950/30">
+            {attachedDocs.map((doc, i) => (
+              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded-md text-[10px] text-indigo-300">
+                <FileText size={9} /> {doc.name.length > 15 ? doc.name.substring(0, 12) + '...' : doc.name}
+                <button onClick={() => removeDoc(i)} className="hover:text-rose-400 ml-0.5"><X size={8} /></button>
+              </span>
             ))}
           </div>
-          <div className="px-3 py-3 border-t border-slate-800/40 bg-slate-900/50 space-y-2">
-            {!isRecording ? (
-              <>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={prepInput}
-                    onChange={e => setPrepInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handlePrepSubmit()}
-                    placeholder="配置策略..."
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] placeholder-slate-700 focus:outline-none focus:border-indigo-500/50"
-                  />
-                  <button onClick={handlePrepSubmit} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors flex items-center justify-center"><Send size={12} /></button>
-                </div>
+        )}
 
-                {/* ─── Audio Source Selector ─── */}
-                <div className="flex gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800">
-                  <button
-                    onClick={() => setSelectedSource('mic')}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide transition-all ${
-                      selectedSource === 'mic' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40' : 'text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    <Mic size={12} /> 麦克风
-                  </button>
-                  <button
-                    onClick={() => setSelectedSource('screen')}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide transition-all ${
-                      selectedSource === 'screen' ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40' : 'text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    <Monitor size={12} /> 系统音频
-                  </button>
-                  <label
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wide transition-all cursor-pointer ${
-                      selectedSource === 'file' ? 'bg-amber-600/30 text-amber-300 border border-amber-500/40' : 'text-slate-500 hover:text-slate-300'
-                    }`}
-                  >
-                    <Upload size={12} /> 文件
-                    <input type="file" accept="audio/*,video/*" onChange={handleFileSelect} className="hidden" />
-                  </label>
-                </div>
+        {/* Prep chat */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-3" style={{ scrollbarWidth: 'thin' }}>
+          {prepChat.map((msg, i) => (
+            <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in fade-in`}>
+              <div className={`max-w-[90%] px-3 py-2 rounded-xl text-xs leading-relaxed ${
+                msg.role === 'user' ? 'bg-indigo-600/20 border border-indigo-500/30 text-indigo-100 rounded-tr-sm' 
+                : 'bg-slate-800 border border-slate-700/50 text-slate-300 rounded-tl-sm'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+        </div>
 
-                {/* File name indicator */}
-                {selectedSource === 'file' && fileName && (
-                  <div className="text-[10px] text-amber-400/70 truncate px-1 flex items-center gap-1">
-                    <FileText size={10} /> {fileName}
-                  </div>
-                )}
+        {/* Bottom controls */}
+        <div className="px-3 py-2.5 border-t border-slate-800/40 bg-slate-900/50 space-y-2">
+          {!isRecording ? (
+            <>
+              <div className="flex gap-1.5">
+                <input
+                  type="text" value={prepInput}
+                  onChange={e => setPrepInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handlePrepSubmit()}
+                  placeholder="输入人设、策略、对方情报..."
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px] placeholder-slate-700 focus:outline-none focus:border-indigo-500/50"
+                />
+                <button onClick={handlePrepSubmit} className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-400 transition-colors"><Send size={12} /></button>
+              </div>
 
-                {/* Screen capture hint */}
-                {selectedSource === 'screen' && (
-                  <div className="text-[10px] text-blue-400/50 px-1 leading-tight">
-                    💡 捕获Zoom/Teams/Meet等会议音频。请在弹窗中勾选「分享音频」。
-                  </div>
-                )}
+              {/* Audio source + Language */}
+              <div className="flex gap-1 p-0.5 bg-slate-950 rounded-lg border border-slate-800">
+                <button onClick={() => setSelectedSource('mic')}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 rounded-md text-[9px] font-bold transition-all ${
+                    selectedSource === 'mic' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40' : 'text-slate-600 hover:text-slate-400'
+                  }`}><Mic size={10} /> 麦克风</button>
+                <button onClick={() => setSelectedSource('screen')}
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 rounded-md text-[9px] font-bold transition-all ${
+                    selectedSource === 'screen' ? 'bg-blue-600/30 text-blue-300 border border-blue-500/40' : 'text-slate-600 hover:text-slate-400'
+                  }`}><Monitor size={10} /> 系统音频</button>
+                <label className={`flex-1 flex items-center justify-center gap-1 py-1 rounded-md text-[9px] font-bold transition-all cursor-pointer ${
+                    selectedSource === 'file' ? 'bg-amber-600/30 text-amber-300 border border-amber-500/40' : 'text-slate-600 hover:text-slate-400'
+                  }`}><Upload size={10} /> 文件
+                  <input type="file" accept="audio/*,video/*" onChange={handleFileSelect} className="hidden" />
+                </label>
+              </div>
 
-                {/* ─── ASR Language ─── */}
-                <div className="flex items-center gap-2">
-                  <span className="text-[9px] text-slate-600 font-bold uppercase tracking-tight shrink-0">识别语言</span>
-                  <select 
-                    value={asrLang} 
-                    onChange={e => setAsrLang(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
-                  >
-                    <option value="auto">🌐 自动检测</option>
-                    <option value="ja">🇯🇵 日本語</option>
-                    <option value="zh">🇨🇳 中文</option>
-                    <option value="en">🇺🇸 English</option>
-                    <option value="ko">🇰🇷 한국어</option>
-                  </select>
-                </div>
-                <button 
-                  onClick={handleStartVoice}
-                  disabled={selectedSource === 'file' && !fileUrl}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-emerald-500/20"
-                >
-                  {selectedSource === 'mic' && <><Mic size={14} /> 开始语音互动</>}
-                  {selectedSource === 'screen' && <><Monitor size={14} /> 捕获会议音频</>}
-                  {selectedSource === 'file' && <><Upload size={14} /> 开始解析文件</>}
-                </button>
-              </>
-            ) : (
-              <button onClick={stopRecording} className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2">
-                <MicOff size={14} /> 结束当前会话
+              {selectedSource === 'file' && fileName && (
+                <div className="text-[9px] text-amber-400/70 truncate px-1 flex items-center gap-1"><FileText size={9} /> {fileName}</div>
+              )}
+              {selectedSource === 'screen' && (
+                <div className="text-[9px] text-blue-400/50 px-1 leading-tight">💡 请在弹窗中勾选「分享音频」</div>
+              )}
+
+              <div className="flex items-center gap-1.5">
+                <select value={asrLang} onChange={e => setAsrLang(e.target.value)}
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none cursor-pointer">
+                  <option value="auto">🌐 自动检测</option>
+                  <option value="ja">🇯🇵 日本語</option>
+                  <option value="zh">🇨🇳 中文</option>
+                  <option value="en">🇺🇸 English</option>
+                  <option value="ko">🇰🇷 한국어</option>
+                </select>
+              </div>
+
+              <button onClick={handleStartVoice} disabled={selectedSource === 'file' && !fileUrl}
+                className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-emerald-500/20">
+                {selectedSource === 'mic' && <><Mic size={13} /> 接通</>}
+                {selectedSource === 'screen' && <><Monitor size={13} /> 捕获会议</>}
+                {selectedSource === 'file' && <><Upload size={13} /> 解析文件</>}
               </button>
-            )}
-          </div>
-        </section>
+            </>
+          ) : (
+            <button onClick={stopRecording} className="w-full py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[11px] font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2">
+              <MicOff size={13} /> 挂断
+            </button>
+          )}
+        </div>
+      </section>
 
-        {/* ─── 2. BOARD (CENTER) ─── */}
-        <section className="flex-[3] flex flex-col border-r border-slate-800/40">
-          <div className="px-4 py-2 bg-slate-900/30 border-b border-slate-800/40 flex items-center justify-between shrink-0">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-              <BookOpen size={13} /> Board / 看板区
-            </span>
-            <div className="flex items-center gap-3 text-[9px] font-bold text-slate-600">
-              <button onClick={clearSession} className="hover:text-rose-400 uppercase tracking-widest flex items-center gap-1 transition-colors"><Trash2 size={10} /> 清空记录</button>
+      {/* ═══════════ CENTER: BOARD ═══════════ */}
+      <section className="flex-[3] flex flex-col border-r border-slate-800/40">
+        <div className="px-4 py-2 bg-slate-900/30 border-b border-slate-800/40 flex items-center justify-between shrink-0">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+            <BookOpen size={13} /> Board / 看板区
+          </span>
+          <div className="flex items-center gap-3 text-[9px] font-bold text-slate-600">
+            <button onClick={clearSession} className="hover:text-rose-400 uppercase tracking-widest flex items-center gap-1 transition-colors"><Trash2 size={10} /> 清空</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin' }}>
+          {boardEntries.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center text-center opacity-20">
+              <Mic size={48} className="mb-4 text-slate-700" />
+              <p className="text-sm font-medium">转录与翻译将在此显示</p>
             </div>
+          )}
+          {boardEntries.map((entry) => (
+            <TranscriptBubble key={entry.id} entry={entry} />
+          ))}
+          <div ref={boardEndRef} />
+        </div>
+      </section>
+
+      {/* ═══════════ RIGHT: MULTI-LANE ═══════════ */}
+      <aside className="flex-[2] flex flex-col bg-slate-900/40 min-w-[320px] shadow-xl overflow-hidden">
+        {/* LANE 1: SUMMARY */}
+        <div className="flex-[4] flex flex-col border-b border-white/5 bg-emerald-950/5 min-h-[200px]">
+          <div className="px-4 py-2 bg-emerald-950/20 border-b border-emerald-500/10 flex items-center justify-between shrink-0">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Live Summary
+            </span>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin' }}>
-            {boardEntries.length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center text-center opacity-20">
-                <Mic size={48} className="mb-4 text-slate-700" />
-                <p className="text-sm font-medium">转录与翻译将在此显示</p>
+            {!summary ? (
+              <div className="h-full flex flex-col items-center justify-center text-center opacity-20 py-10">
+                <FileText size={24} className="mb-2" />
+                <p className="text-[10px] uppercase tracking-widest">后台自动生成中...</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-[12.5px] text-slate-200 leading-relaxed bg-slate-950/50 p-3 rounded-xl border border-emerald-500/10 shadow-inner italic">{summary.overview}</p>
+                {summary.key_points?.length > 0 && (
+                  <div className="space-y-2">
+                    <span className="text-[9px] font-bold text-emerald-500/50 uppercase tracking-widest">Key Points</span>
+                    <ul className="space-y-1.5 pl-1">
+                      {summary.key_points.map((pt, i) => (
+                        <li key={i} className="text-[11px] text-slate-400 flex gap-2 leading-snug"><span className="text-emerald-500/40 shrink-0">•</span><span>{pt}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {(summary.action_items?.length > 0 || summary.decisions?.length > 0) && (
+                  <div className="space-y-2 pt-2 border-t border-white/5">
+                    <span className="text-[9px] font-bold text-amber-500/50 uppercase tracking-widest">Takeaways</span>
+                    <ul className="space-y-1.5 pl-1">
+                      {[...(summary.decisions || []), ...(summary.action_items || [])].map((v, i) => (
+                        <li key={i} className="text-[11px] text-amber-100/60 flex gap-2 leading-snug"><span className="text-amber-500/30 shrink-0">✓</span><span>{v}</span></li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
-            {boardEntries.map((entry) => (
-              <TranscriptBubble key={entry.id} entry={entry} />
+          </div>
+        </div>
+
+        {/* LANE 2: ACTION FEED */}
+        <div className="flex-[6] flex flex-col overflow-hidden bg-indigo-950/5">
+          <div className="px-4 py-2 bg-indigo-950/20 border-b border-indigo-500/10 shrink-0">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-1.5">
+              <Sparkles size={13} /> Copilot & Proxy
+            </span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin' }}>
+            {agentEntries.length === 0 && !aiDraft && suggestions.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center text-center opacity-10 py-10">
+                <Bot size={32} />
+                <p className="text-[10px] uppercase font-bold tracking-widest mt-2">待机中</p>
+              </div>
+            )}
+            {agentEntries.map(entry => (
+              <div key={entry.id} className="relative group p-3 bg-indigo-500/5 border border-indigo-500/10 rounded-xl hover:border-indigo-500/20 transition-all">
+                <div className="flex justify-between items-start mb-1">
+                  <span className="text-[9px] font-bold text-indigo-400/50 uppercase tracking-widest flex items-center gap-1"><Bot size={10}/> History</span>
+                  <button onClick={() => sendManualTTS(entry.text)} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-indigo-600/30 hover:bg-indigo-600 text-white rounded"><Volume2 size={11} /></button>
+                </div>
+                <p className="text-[13px] text-slate-300 leading-relaxed">{entry.text}</p>
+              </div>
             ))}
-            <div ref={boardEndRef} />
-          </div>
-        </section>
-
-        {/* ─── 3. MULTI-LANE SIDEPANEL (RIGHT) ─── */}
-        <aside className="flex-[2] flex flex-col bg-slate-900/40 min-w-[340px] border-l border-slate-800/40 shadow-xl overflow-hidden">
-          
-          {/* LANE 1: SUMMARY (TOP) */}
-          <div className="flex-[4] flex flex-col border-b border-white/5 bg-emerald-950/5 min-h-[220px]">
-            <div className="px-4 py-2 bg-emerald-950/20 border-b border-emerald-500/10 flex items-center justify-between shrink-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live Summary / 会议摘要
-              </span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4" style={{ scrollbarWidth: 'thin' }}>
-              {!summary ? (
-                <div className="h-full flex flex-col items-center justify-center text-center opacity-20 py-10">
-                  <FileText size={24} className="mb-2" />
-                  <p className="text-[10px] uppercase tracking-widest">后台自动生成中...</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <p className="text-[12.5px] text-slate-200 leading-relaxed bg-slate-950/50 p-3 rounded-xl border border-emerald-500/10 shadow-inner italic">
-                    {summary.overview}
-                  </p>
-                  <div className="space-y-3">
-                    {summary.key_points?.length > 0 && (
-                      <div className="space-y-2">
-                        <span className="text-[9px] font-bold text-emerald-500/50 uppercase tracking-widest flex items-center gap-1">Key Highlights</span>
-                        <ul className="space-y-1.5 pl-1">
-                          {summary.key_points.map((pt, i) => (
-                            <li key={i} className="text-[11px] text-slate-400 flex gap-2 leading-snug">
-                              <span className="text-emerald-500/40 shrink-0">•</span><span>{pt}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {(summary.action_items?.length > 0 || summary.decisions?.length > 0) && (
-                      <div className="space-y-2 pt-2 border-t border-white/5">
-                        <span className="text-[9px] font-bold text-amber-500/50 uppercase tracking-widest flex items-center gap-1">Takeaways</span>
-                        <ul className="space-y-1.5 pl-1">
-                          {[...(summary.decisions || []), ...(summary.action_items || [])].map((v, i) => (
-                            <li key={i} className="text-[11px] text-amber-100/60 flex gap-2 leading-snug">
-                              <span className="text-amber-500/30 shrink-0 select-none">✓</span><span>{v}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+            {(aiDraft || suggestions.length > 0) && (
+              <div className="space-y-3 pt-3 border-t border-slate-800/60 relative">
+                <div className="absolute -top-[9px] left-1/2 -translate-x-1/2 px-2 bg-slate-900/60 text-[9px] uppercase font-bold tracking-tighter text-emerald-400 border border-slate-800/60 rounded-full">New</div>
+                {aiDraft && (
+                  <div className="p-3 bg-gradient-to-br from-indigo-900/40 to-violet-900/20 border border-indigo-500/30 rounded-xl shadow-lg">
+                    <span className="text-[9px] font-bold text-indigo-300 uppercase block mb-1.5 opacity-70">Proposed</span>
+                    <p className="text-[14px] text-white leading-relaxed mb-3">{aiDraft}</p>
+                    <button onClick={() => sendManualTTS(aiDraft)} className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg">
+                      <Volume2 size={14} /> 一键接管
+                    </button>
                   </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* LANE 2: ACTION FEED (BOTTOM) */}
-          <div className="flex-[6] flex flex-col overflow-hidden bg-indigo-950/5">
-            <div className="px-4 py-2 bg-indigo-950/20 border-b border-indigo-500/10 flex items-center justify-between shrink-0">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-1.5">
-                <Sparkles size={13} /> Action & Proxy / 副驾与接管
-              </span>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-5" style={{ scrollbarWidth: 'thin' }}>
-              {agentEntries.length === 0 && !aiDraft && suggestions.length === 0 && (
-                <div className="h-full flex flex-col items-center justify-center text-center opacity-10 py-10">
-                  <Bot size={32} />
-                  <p className="text-[10px] uppercase font-bold tracking-widest mt-2">待机中</p>
-                </div>
-              )}
-              {agentEntries.map(entry => (
-                <div key={entry.id} className="relative group p-3 bg-indigo-500/5 border border-indigo-500/10 rounded-xl hover:border-indigo-500/20 transition-all shadow-sm">
-                  <div className="flex justify-between items-start mb-1.5">
-                    <span className="text-[9px] font-bold text-indigo-400/50 uppercase tracking-widest flex items-center gap-1"><Bot size={10}/> Proxy History</span>
-                    <button onClick={() => sendManualTTS(entry.text)} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-indigo-600/30 hover:bg-indigo-600 text-white rounded flex items-center justify-center"><Volume2 size={11} /></button>
+                )}
+                {suggestions.length > 0 && (
+                  <div className="grid gap-2">
+                    {suggestions.map((sug) => (
+                      <div key={sug.id} onClick={() => sendSuggestion(sug.text)} className="group p-3 bg-slate-800/40 hover:bg-indigo-900/40 border border-slate-700/50 hover:border-indigo-500/50 rounded-xl transition-all cursor-pointer">
+                        <p className="text-[12px] text-slate-200 leading-relaxed mb-2">{sug.text}</p>
+                        <div className="flex justify-end"><span className="text-[9px] px-2.5 py-1 bg-slate-800 rounded-lg text-slate-400 font-bold uppercase group-hover:bg-indigo-600 group-hover:text-white transition-all flex items-center gap-1"><Volume2 size={11}/> 发送</span></div>
+                      </div>
+                    ))}
                   </div>
-                  <p className="text-[13px] text-slate-300 leading-relaxed font-light">{entry.text}</p>
-                </div>
-              ))}
-              {(aiDraft || suggestions.length > 0) && (
-                <div className="space-y-4 pt-4 border-t border-slate-800/60 relative">
-                  <div className="absolute -top-[9px] left-1/2 -translate-x-1/2 px-2 bg-slate-900/60 text-[9px] uppercase font-bold tracking-tighter text-emerald-400 border border-slate-800/60 rounded-full">New Suggestions</div>
-                  {aiDraft && (
-                    <div className="p-4 bg-gradient-to-br from-indigo-900/40 to-violet-900/20 border border-indigo-500/30 rounded-xl shadow-lg shadow-indigo-500/5">
-                      <span className="text-[9px] font-bold text-indigo-300 uppercase block mb-2 opacity-70">Proposed Response</span>
-                      <p className="text-[15px] text-white leading-relaxed font-normal mb-4">{aiDraft}</p>
-                      <button onClick={() => sendManualTTS(aiDraft)} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg hover:shadow-indigo-600/20">
-                        <Volume2 size={14} /> 一键接管 (TTS)
-                      </button>
-                    </div>
-                  )}
-                  {suggestions.length > 0 && (
-                    <div className="grid gap-2">
-                       {suggestions.map((sug) => (
-                        <div key={sug.id} onClick={() => sendSuggestion(sug.text)} className="group p-3 bg-slate-800/40 hover:bg-indigo-900/40 border border-slate-700/50 hover:border-indigo-500/50 rounded-xl transition-all cursor-pointer">
-                          <p className="text-[13px] text-slate-200 leading-relaxed mb-3">{sug.text}</p>
-                          <div className="flex justify-end"><span className="text-[10px] px-3 py-1.5 bg-slate-800 rounded-lg text-slate-400 font-bold uppercase group-hover:bg-indigo-600 group-hover:text-white transition-all shadow flex items-center gap-1.5"><Volume2 size={12}/> 发送语音</span></div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              <div ref={agentEndRef} />
-            </div>
+                )}
+              </div>
+            )}
+            <div ref={agentEndRef} />
           </div>
+        </div>
 
-          {/* INPUT (BOTTOM) */}
-          <div className="px-3 py-3 border-t border-slate-800/40 bg-slate-950/60 shrink-0">
-            <div className="flex gap-2">
-              <input type="text" value={manualInput} onChange={e => setManualInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleManualSend()} placeholder="手动接管发言..." className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs placeholder-slate-700 focus:outline-none focus:border-indigo-500/50" />
-              <button onClick={handleManualSend} disabled={!manualInput.trim()} className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-lg transition-all shadow-lg active:scale-95 flex items-center justify-center"><Send size={14} /></button>
-            </div>
+        {/* Manual input */}
+        <div className="px-3 py-2.5 border-t border-slate-800/40 bg-slate-950/60 shrink-0">
+          <div className="flex gap-2">
+            <input type="text" value={manualInput} onChange={e => setManualInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleManualSend()} placeholder="手动接管发言..." className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs placeholder-slate-700 focus:outline-none focus:border-indigo-500/50" />
+            <button onClick={handleManualSend} disabled={!manualInput.trim()} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 rounded-lg transition-all shadow-lg active:scale-95"><Send size={14} /></button>
           </div>
-        </aside>
-      </main>
+        </div>
+      </aside>
     </div>
   );
 }
 
 // ─── Sub-components ───
 
-function SectionHeader({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
-  return (
-    <div className="px-4 py-2 bg-slate-900/30 border-b border-slate-800/40 flex items-center justify-between shrink-0">
-      <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">{icon} {title}</span>
-      <span className="text-[9px] text-slate-600 font-mono italic">{subtitle}</span>
-    </div>
-  );
-}
-
 function StatusDot({ label, active }: { label: string; active: boolean }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-1">
       <div className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${active ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-700'}`} />
       <span className={`text-[9px] font-bold tracking-tighter ${active ? 'text-emerald-500' : 'text-slate-700'}`}>{label}</span>
     </div>

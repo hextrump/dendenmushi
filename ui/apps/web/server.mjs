@@ -129,70 +129,114 @@ wss.on('connection', (clientWs) => {
         asrWs.on('close', () => { asrReady = false; console.log('[ASR] Closed'); });
     };
 
-    // ─── TTS ──────────────────────────────────────
+    // ─── TTS (Qwen-TTS-Realtime API) ──────────────
     const initTTS = () => {
-        const model = process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash';
-        const voice = 'Cherry'; // High speed flash voice
-        // Switch to the stable inference endpoint for long-form synthesis
-        const wsUrl = `wss://dashscope.aliyuncs.com/api-ws/v1/inference`;
-        console.log(`[TTS] Connecting: ${model}, voice: ${voice}`);
-
-        ttsWs = new WebSocket(wsUrl, {
-            headers: { Authorization: `Bearer ${apiKey}` }
-        });
-
-        ttsWs.on('open', () => {
-            console.log("[TTS] Connected");
-            ttsReady = true;
-            send({ type: 'system', status: 'tts_connected' });
-        });
-
-        ttsWs.on('message', (raw, isBinary) => {
-            // Inference API sends audio as binary PCM frames directly
-            const firstByte = raw[0];
-            if (isBinary || (firstByte !== 0x7B && firstByte !== 0x5B)) {
-                send({ type: 'tts_audio', audio: raw.toString('base64') });
-                return;
-            }
-            
-            try {
-                const event = JSON.parse(raw.toString());
-                const evType = event.header?.event;
-                if (evType === 'task-finished') send({ type: 'tts_done' });
-                if (evType === 'task-failed') console.error(`[TTS] Task Failed: ${JSON.stringify(event.payload)}`);
-            } catch(e) { 
-                // Treat as audio if not valid JSON
-                send({ type: 'tts_audio', audio: raw.toString('base64') });
-            }
-        });
-
-        ttsWs.on('error', err => { console.error('[TTS] Error:', err.message); ttsReady = false; });
-        ttsWs.on('close', () => { ttsReady = false; console.log('[TTS] Closed'); });
+        // initTTS is now a no-op; each sendToTTS creates a fresh realtime connection
+        ttsReady = true;
+        send({ type: 'system', status: 'tts_connected' });
+        console.log('[TTS] Ready (per-request connections)');
     };
 
+    // Create a fresh TTS Realtime connection for each synthesis request
     const sendToTTS = (text) => {
-        if (!ttsReady || !ttsWs || ttsWs.readyState !== WebSocket.OPEN || !text.trim()) return;
-        
-        console.log(`[TTS] Requesting full synth: "${text.substring(0, 30)}..."`);
-        const taskId = require('crypto').randomUUID().replace(/-/g, '');
-        
-        // Use standard inference task format for long-form reliability
-        ttsWs.send(JSON.stringify({
-            header: { action: "run-task", task_id: taskId, streaming: "duplex" },
-            payload: {
-                task_group: "audio",
-                task: "tts",
-                function: "SpeechSynthesizer",
-                model: process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash',
-                parameters: {
-                    text: text,
-                    voice: 'Cherry',
-                    format: 'pcm',
-                    sample_rate: 24000,
-                    text_type: 'plain'
-                }
+        if (!text.trim()) return;
+
+        const model = process.env.QWEN_TTS_MODEL || 'qwen3-tts-flash-realtime';
+        const voice = 'Cherry';
+        const tag = Date.now().toString(36);
+        // Correct endpoint: /v1/realtime with model in query string
+        const wsUrl = `wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=${model}`;
+
+        console.log(`[TTS:${tag}] Connecting: ${wsUrl}`);
+        console.log(`[TTS:${tag}] Text: "${text.substring(0, 60)}"`);
+
+        const tts = new WebSocket(wsUrl, {
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'OpenAI-Beta': 'realtime=v1'
             }
-        }));
+        });
+
+        tts.on('open', () => {
+            console.log(`[TTS:${tag}] Connected, sending session.update...`);
+
+            // Step 1: Configure session
+            tts.send(JSON.stringify({
+                event_id: `evt_${tag}_setup`,
+                type: 'session.update',
+                session: {
+                    voice,
+                    mode: 'server_commit',
+                    response_format: 'pcm',
+                    sample_rate: 24000,
+                }
+            }));
+        });
+
+        let sessionUpdated = false;
+
+        tts.on('message', (raw) => {
+            try {
+                const event = JSON.parse(raw.toString());
+                const evType = event.type;
+
+                switch (evType) {
+                    case 'session.created':
+                        console.log(`[TTS:${tag}] Session created: ${event.session?.id}`);
+                        break;
+
+                    case 'session.updated':
+                        console.log(`[TTS:${tag}] Session updated, sending text...`);
+                        sessionUpdated = true;
+                        // Step 2: Send text
+                        tts.send(JSON.stringify({
+                            event_id: `evt_${tag}_text`,
+                            type: 'input_text_buffer.append',
+                            text: text
+                        }));
+                        // Step 3: Finish session (server_commit mode will auto-synthesize)
+                        tts.send(JSON.stringify({
+                            event_id: `evt_${tag}_finish`,
+                            type: 'session.finish'
+                        }));
+                        break;
+
+                    case 'response.audio.delta':
+                        // Base64 PCM audio chunk
+                        if (event.delta) {
+                            send({ type: 'tts_audio', audio: event.delta });
+                        }
+                        break;
+
+                    case 'response.done':
+                        console.log(`[TTS:${tag}] Response done`);
+                        send({ type: 'tts_done' });
+                        break;
+
+                    case 'session.finished':
+                        console.log(`[TTS:${tag}] Session finished, closing.`);
+                        tts.close();
+                        break;
+
+                    case 'error':
+                        console.error(`[TTS:${tag}] ERROR: ${event.error?.message || JSON.stringify(event)}`);
+                        break;
+
+                    default:
+                        // Other events: response.created, response.output_item.added, etc.
+                        break;
+                }
+            } catch (e) {
+                console.error(`[TTS:${tag}] Parse error:`, e.message);
+            }
+        });
+
+        tts.on('error', err => {
+            console.error(`[TTS:${tag}] CONNECTION ERROR: ${err.message}`);
+        });
+        tts.on('close', (code, reason) => {
+            console.log(`[TTS:${tag}] Closed: code=${code}, reason=${reason?.toString() || 'none'}`);
+        });
     };
 
     // ─── Core Pipeline: Process ASR result ─────────

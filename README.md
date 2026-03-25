@@ -6,7 +6,7 @@
 
 ```
 dendenmushi/
-├── plan.md                  # 项目需求文档
+├── ref/                     # 官方 API 参考文档
 ├── README.md                # 本文件
 │
 ├── ui/                      # 前端 + 后端 monorepo
@@ -14,48 +14,47 @@ dendenmushi/
 │   │   └── web/             # Next.js Dashboard + Node.js 后端
 │   │       ├── server.mjs           # ★ 核心后端：WebSocket 桥接 (ASR/LLM/TTS)
 │   │       ├── src/
-│   │       │   ├── app/page.tsx     # Dashboard 主页面 (看板+副驾+代理)
+│   │       │   ├── app/page.tsx     # Dashboard 主页面 (History + Context + Board)
 │   │       │   └── providers/
 │   │       │       └── Stream.tsx   # 客户端 WebSocket + 音频流 Provider
 │   │       └── public/
 │   │           └── audio-processor.js  # AudioWorklet PCM 采集 (16kHz)
 │   └── package.json
-│
-├── main.py                  # Python 后端 (REST fallback, 可选)
-├── pyproject.toml           # Python 依赖
-└── env                      # 环境变量 (不要提交!)
+└── .env.local               # 环境变量 (不要提交!)
 ```
 
 ## 核心架构
 
 ```
-┌─────────────────────────────────────────────┐
-│  Browser (Next.js Dashboard)                │
-│  AudioWorklet → 16kHz PCM → WebSocket       │
-└──────────────────┬──────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  Browser (Next.js Dashboard)                 │
+│  PCM Capture → Binary WS → Node.js Bridge    │
+└──────────────────┬───────────────────────────┘
                    │ ws://localhost:8080
-┌──────────────────▼──────────────────────────┐
-│  Node.js Bridge  (server.mjs)   ★ 核心后端  │
-│  ┌────────┐  ┌────────┐  ┌────────┐        │
-│  │Qwen ASR│  │Qwen LLM│  │Qwen TTS│        │
-│  │Realtime│→ │Streaming│→ │Streaming│        │
-│  │  WS    │  │  HTTP   │  │  WS    │        │
-│  └────────┘  └────────┘  └────────┘        │
-└─────────────────────────────────────────────┘
+┌──────────────────▼───────────────────────────┐
+│  Node.js Bridge  (server.mjs)   ★ 核心后端   │
+│  ┌───────────┐  ┌───────────┐  ┌───────────┐ │
+│  │ Qwen ASR  │  │ Qwen LLM  │  │ Qwen TTS  │ │
+│  │ Realtime  │→ │ Streaming │→ │ Realtime  │ │
+│  │ WS (v1)   │  │ HTTP      │  │ WS (v1)   │ │
+│  └───────────┘  └───────────┘  └───────────┘ │
+└──────────────────────────────────────────────┘
 
-延迟目标: ASR 100ms + LLM 200ms + TTS 150ms ≈ 300-500ms
+架构优势:
+- 极速响应: 端到端全双工流式处理，对话体感延迟极低。
+- 多源支持: 支持 麦克风 / 系统会议音频 / 本地文件 识别。
+- 环境隔离: 核心 ASR/TTS 管线在 Node.js 侧处理，前端轻量化。
 ```
 
 ## 快速启动
 
 ### 1. 配置环境变量
 ```bash
-# ui/apps/web/.env.local
+# ui/apps/web/.env.local (基于 .env.example 复制)
 QWEN_API_KEY=your_key_here
-QWEN_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_ASR_MODEL=qwen3-asr-flash-realtime-2026-02-10
 QWEN_LLM_MODEL=qwen-plus
-QWEN_TTS_MODEL=qwen3-tts-flash
+QWEN_TTS_MODEL=qwen3-tts-flash-realtime
 QWEN_TTS_VOICE=Cherry
 ```
 

@@ -207,11 +207,13 @@ export const StreamProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
       // TTS audio chunk
       case 'tts_audio':
+        console.log('[FE] Received tts_audio chunk, size:', data.audio?.length);
         playTTSChunk(data.audio);
         break;
 
       // TTS done
       case 'tts_done':
+        console.log('[FE] TTS playback done signal');
         break;
 
       // Session summary
