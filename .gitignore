@@ -6,6 +6,9 @@ dist/
 wheels/
 *.egg-info
 .venv
+uv.lock
+.python-version
+pyproject.toml
 
 # Node
 node_modules/
@@ -17,7 +20,9 @@ node_modules/
 .env.local
 env
 
-# Debug / temp
+# Internal / debug
+plan.md
+mic-test.html
 *.wav
 *.mp3
 *.log
